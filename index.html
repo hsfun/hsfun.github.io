@@ -1,0 +1,124 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>GDB+assembly for understanding binaries by hsfun</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1>GDB+assembly for understanding binaries</h1>
+        <p></p>
+
+
+        <p class="view"><a href="https://github.com/hsfun">View My GitHub Profile</a></p>
+
+      </header>
+      <section>
+        <h1>
+<a name="gdbassembly-for-understanding-binaries" class="anchor" href="#gdbassembly-for-understanding-binaries"><span class="octicon octicon-link"></span></a>GDB+Assembly for understanding binaries.</h1>
+
+<p>Sometimes, it's handy to step through some compiled code, and source-level debugging won't cut it - maybe  you don't have the source, or it's in several programming languages. Most recently, <a href="http://jvns.ca/">Julia</a> pointed out a capture-the-flag site, <a href="http://zeromutarts.de/">zeromutarts</a>, which has a small reverse-engineering challenge, called 'serial'. If you sign up, you can download the binary and follow along with this post.</p>
+
+<p>So: how do you start with something like this? The first thing I do is disassemble the binary:
+ serial.s&gt;. It looks something like this:</p>
+
+<pre><code>serial:     file format elf32-i386
+Disassembly of section .init:
+080482f4 &lt;_init&gt;:
+ 80482f4:       53                      push   %ebx
+ 80482f5:       83 ec 08                sub    $0x8,%esp
+ 80482f8:       e8 b3 00 00 00          call   80483b0 &lt;__x86.get_pc_thunk.bx&gt;
+....
+ &lt;main&gt;:
+ 804847d:       55                      push   %ebp
+ 804847e:       89 e5                   mov    %esp,%ebp
+ 8048480:       83 e4 f0                and    $0xfffffff0,%esp
+ 8048483:       83 ec 30                sub    $0x30,%esp
+ 8048486:       c7 04 24 80 86 04 08    movl   $0x8048680,(%esp)
+ 804848d:       e8 ae fe ff ff          call   8048340 &lt;puts@plt&gt;
+....
+</code></pre>
+
+<p>You can clearly see the main function (and its address, 0x0804847d), as well as a lot of other supporting code, such as _init, which come from glibc rather than the application's programmer. A typical line looks like this:
+<code>804847d:       55                      push   %ebp</code>
+The first field is the address, the second is how it's actually represented in the binary, and the third is a <a href="http://en.wikipedia.org/wiki/Assembly_language">mnemonic</a> representation, which is more human-friendly than the raw numbers. People usually write in assembly with mnemonics. </p>
+
+<p>So, let's load this binary into gdb:
+<code>gdb serial</code>
+It's handy to see what the current instruction is, so within gdb, run:
+<code>display /i $pc</code>, and then set a breakpoint at main to start looking at the interesting parts, rather than all the glibc setup: <code>break main</code>, then type <code>run</code> to start the program. You'll see something like this:</p>
+
+<pre><code>(gdb) run
+Starting program: /yourpath/serial
+
+Breakpoint 1, 0x08048480 in main ()
+1: x/i $pc
+=&gt; 0x8048480 &lt;main+3&gt;:  and    $0xfffffff0,%esp
+</code></pre>
+
+<p>If you've seen x86 assembly before, especially under Windows, the formatting may surprise you: objdump and gdb use <a href="http://asm.sourceforge.net/articles/linasm.html">AT&amp;T, rather than Intel, syntax</a>. The biggest difference is that an instruction like <code>mov %esp,%ebp</code> copies the contents of the register esp into ebp, rather than vice versa. If you're used to intel syntax, run <code>set disassembly-flavor intel</code> in gdb and you'll see familiar forms like <code>mov ebp, esp</code> and <code>mov DWORD PTR [esp],0x8048680</code> instead.  The rest of this document will keep using AT&amp;T syntax.</p>
+
+<p>If you've debugged with gdb before, you probably know the 'n' and 's' commands, which execute the next line. N steps over function calls, while s steps into the. They have instruction-level equivalents, ni and si. If you want to dig into the actual assembly code for, say, malloc or printf, feel free to use si, but ni is a lot more convenient for a program like this, as it lets you ignore their implementations.</p>
+
+<pre><code>(gdb) ni
+0x08048483 in main ()
+1: x/i $pc
+=&gt; 0x8048483 &lt;main+6&gt;:  sub    $0x30,%esp
+(gdb) ni
+0x08048486 in main ()
+1: x/i $pc
+=&gt; 0x8048486 &lt;main+9&gt;:  movl   $0x8048680,(%esp)
+</code></pre>
+
+<p>There are a few more handy tricks.
+See the value of the registers:</p>
+
+<pre><code>(gdb) info registers
+eax            0x1      1
+ecx            0xffffd6d4       -10540
+edx            0x804847d        134513789
+ebx            0xf7fac000       -134561792
+esp            0xffffd600       0xffffd600
+ebp            0xffffd638       0xffffd638
+esi            0x0      0
+edi            0x0      0
+eip            0x8048486        0x8048486 &lt;main+9&gt;
+eflags         0x286    [ PF SF IF ]
+cs             0x23     35
+ss             0x2b     43
+ds             0x2b     43
+es             0x2b     43
+fs             0x0      0
+gs             0x63     99`
+</code></pre>
+
+<p>Break on a memory address, symbolically or numerically: <code>break *main+0x9</code> or <code>break *0x8048486</code>. This is really handy when you've figured out that that address is something interesting, and you want to run or rerun the program and up at that exact point at a gdb prompt.</p>
+
+<p>You can also inspect the value of one particular register, change it, and inspect it again:</p>
+
+<pre><code>(gdb) info registers eax
+eax            0x3      3
+(gdb) set $eax = 5
+(gdb) info registers eax
+eax            0x5      5
+</code></pre>
+
+<p>Have fun.</p>
+      </section>
+      <footer>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+    
+  </body>
+</html>
