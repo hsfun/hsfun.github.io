@@ -29,7 +29,7 @@
 <p>Sometimes, it's handy to step through some compiled code, and source-level debugging won't cut it - maybe  you don't have the source, or it's in several programming languages. Most recently, <a href="http://jvns.ca/">Julia</a> pointed out a capture-the-flag site, <a href="http://zeromutarts.de/">zeromutarts</a>, which has a small reverse-engineering challenge, called 'serial'. If you sign up, you can download the binary and follow along with this post.</p>
 
 <p>So: how do you start with something like this? The first thing I do is disassemble the binary:
- serial.s&gt;. It looks something like this:</p>
+<code>objdump -d serial &gt; serial.s</code>. It looks something like this:</p>
 
 <pre><code>serial:     file format elf32-i386
 Disassembly of section .init:
